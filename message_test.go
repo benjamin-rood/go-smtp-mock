@@ -2,6 +2,7 @@ package smtpmock
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -235,10 +236,47 @@ func TestMessageIsIncludesSuccessfulRcpttoResponse(t *testing.T) {
 }
 
 func TestMessagesAppend(t *testing.T) {
-	t.Run("addes message pointer into items slice", func(t *testing.T) {
-		message, messages := new(Message), new(messages)
-		messages.append(message)
-
-		assert.Same(t, message, messages.items[0])
+	t.Run("Safely add message to MessageList", func(t *testing.T) {
+		message := Message{
+			heloRequest:           "some context",
+			heloResponse:          "some context",
+			helo:                  true,
+			mailfromRequest:       "some context",
+			mailfromResponse:      "some context",
+			mailfrom:              true,
+			rcpttoRequestResponse: [][]string{{"request", "response"}},
+			rcptto:                true,
+			dataRequest:           "some context",
+			dataResponse:          "some context",
+			data:                  true,
+			msgRequest:            "some context",
+			msgResponse:           "some context",
+			msg:                   true,
+			rsetRequest:           "some context",
+			rsetResponse:          "some context",
+			rset:                  true,
+			noop:                  false,
+			quitSent:              true,
+		}
+		list := NewMessageList()
+		go list.Writer()
+		assert.Nil(t, list.head)
+		assert.Nil(t, list.tail.Load())
+		list.Append(message)
+		time.Sleep(50 * time.Millisecond)
+		assert.NotNil(t, list.head)
+		assert.NotNil(t, list.tail.Load())
+		assert.Equal(t, []Message{message}, list.Messages())
+		assert.Equal(t, list.head.data, message)
+		assert.Equal(t, list.tail.Load().data, message) // confirm the data inside is identical
+		assert.NotSame(t, list.tail.Load(), &message)   // confirm it is stored as a COPY (not sharing pointers)
+		assert.Equal(t, 1, len(list.Messages()))
+		list.Append(*zeroMessage)
+		list.Stop() // Append will now exit
+		time.Sleep(50 * time.Millisecond)
+		assert.Equal(t, []Message{message, *zeroMessage}, list.Messages())
+		assert.Equal(t, list.tail.Load().data, *zeroMessage) // confirm the data inside is identical
+		assert.NotSame(t, list.tail.Load(), zeroMessage)     // confirm it is stored as a COPY (not sharing pointers)
+		assert.Equal(t, 2, len(list.Messages()))
 	})
 }

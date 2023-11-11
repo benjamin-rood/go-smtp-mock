@@ -1,6 +1,8 @@
 package smtpmock
 
-import "sync"
+import (
+	"sync/atomic"
+)
 
 // Structure for storing the result of SMTP client-server interaction. Context-included
 // commands should be represented as request/response structure fields
@@ -14,7 +16,10 @@ type Message struct {
 	helo, mailfrom, rcptto, data, msg, rset, noop, quitSent bool
 }
 
-// message methods
+type MessageNode struct {
+	data Message
+	next *MessageNode
+}
 
 // message getters
 
@@ -143,18 +148,70 @@ func (message *Message) isIncludesSuccessfulRcpttoResponse(targetSuccessfulRespo
 // Pointer to empty message
 var zeroMessage = &Message{}
 
-// Concurrent type that can be safely shared between goroutines
-type messages struct {
-	sync.Mutex
-	items []*Message
+// MessageList is an append-only concurrent-safe linked-list when using the provided methods.
+// Oldest element is stored at the head, newest element stored at the tail.
+// There is no need to manually read or set the `head` or `tail`, use the provided
+// methods ONLY.
+type MessageList struct {
+	head    *MessageNode
+	tail    atomic.Pointer[MessageNode] // points to a MessageNode
+	q       chan Message
+	stopped atomic.Bool
 }
 
-// messages methods
+func NewMessageList() *MessageList {
+	return &MessageList{
+		q: make(chan (Message)),
+	}
+}
 
-// Addes new message pointer into concurrent messages slice
-func (messages *messages) append(item *Message) {
-	messages.Lock()
-	defer messages.Unlock()
+func (list *MessageList) Append(m Message) {
+	list.q <- m
+}
 
-	messages.items = append(messages.items, item)
+func (list *MessageList) Stop() {
+	close(list.q)
+	// atomically mark the MessageList as stopped
+	list.stopped.Store(true)
+}
+
+// Writer should be run in a separate goroutine.
+func (list *MessageList) Writer() {
+	if list.q == nil {
+		panic("MessageList.Writer: uninitialised MessageList")
+	}
+	if list.stopped.Load() == true {
+		panic("MessageList.Writer: stopped")
+	}
+	for {
+		select {
+		case data, open := <-list.q:
+			if open {
+				newNode := &MessageNode{data: data, next: nil}
+				if list.head == nil {
+					// when the list is initially empty, set head to the new node.
+					list.head = newNode
+				} else {
+					// otherwise we need to update the tail
+					currentTail := list.tail.Load()
+					currentTail.next = newNode
+				}
+				// atomically update the tail pointer
+				list.tail.Store(newNode)
+			} else {
+				return // channel closed, exit
+			}
+		}
+	}
+}
+
+func (list *MessageList) Messages() []Message {
+	messages := []Message{}
+	ptr := list.head
+	for ptr != nil {
+		msg := ptr.data
+		messages = append(messages, msg)
+		ptr = ptr.next
+	}
+	return messages
 }
