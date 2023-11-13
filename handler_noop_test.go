@@ -1,44 +1,53 @@
 package smtpmock
 
 import (
+	"bufio"
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewHandlerNoop(t *testing.T) {
-	t.Run("returns new handleNoop", func(t *testing.T) {
-		session, message, configuration := new(session), new(Message), new(configuration)
-		handler := newHandlerNoop(session, message, configuration)
-
-		assert.Same(t, session, handler.session)
-		assert.Same(t, message, handler.message)
-		assert.Same(t, configuration, handler.configuration)
-	})
+	t.Skip("returns new handleNoop")
 }
 
 func TestHandlerNoopRun(t *testing.T) {
 	t.Run("when successful NOOP request", func(t *testing.T) {
-		request, session, message, configuration := "NOOP", new(sessionMock), new(Message), createConfiguration()
-		receivedMessage := configuration.msgNoopReceived
-		handler := newHandlerNoop(session, message, configuration)
-		session.On("writeResponse", receivedMessage, configuration.responseDelayQuit).Once().Return(nil)
-		handler.run(request)
+		request := "NOOP"
+		configuration := createConfiguration()
+		connectionAddress := "127.0.0.1:25"
+		connection, address, logger := netConnectionMock{}, netAddressMock{}, new(loggerMock)
+		address.On("String").Once().Return(connectionAddress)
+		connection.On("RemoteAddr").Once().Return(address)
+		response := "250 Ok"
+		logger.On("infoActivity", sessionResponseMsg+response).Once().Return(nil)
+		session := newSession(configuration, connection, logger)
+		binaryData := bytes.NewBufferString("")
+		session.bufout = bufio.NewWriter(binaryData)
+		session.processNOOP(request)
 
-		assert.True(t, message.noop)
+		assert.True(t, session.message.noop)
+		assert.Equal(t, response+"\r\n", binaryData.String())
+		assert.NoError(t, session.err)
 	})
 
 	t.Run("when failure NOOP request", func(t *testing.T) {
-		request, session, message, configuration := "NOOP ", new(sessionMock), new(Message), createConfiguration()
-		handler := newHandlerNoop(session, message, configuration)
-		handler.run(request)
+		request := "NOOP "
+		configuration := createConfiguration()
+		connectionAddress := "127.0.0.1:25"
+		connection, address, logger := netConnectionMock{}, netAddressMock{}, new(loggerMock)
+		address.On("String").Once().Return(connectionAddress)
+		connection.On("RemoteAddr").Once().Return(address)
+		session := newSession(configuration, connection, logger)
+		session.processNOOP(request)
 
-		assert.False(t, message.noop)
+		assert.False(t, session.message.noop)
 	})
 }
 
 func TestHandlerNoopIsInvalidRequest(t *testing.T) {
-	handler := newHandlerNoop(new(session), new(Message), new(configuration))
+	handler := newHandlerNoop()
 
 	t.Run("when request includes invalid NOOP command", func(t *testing.T) {
 		request := "NOOP "

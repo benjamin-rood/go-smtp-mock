@@ -104,11 +104,12 @@ func TestSessionDiscardBufin(t *testing.T) {
 
 func TestNewSession(t *testing.T) {
 	t.Run("creates new SMTP session", func(t *testing.T) {
+		configuration := createConfiguration()
 		connectionAddress := "127.0.0.1:25"
 		connection, address, logger := netConnectionMock{}, netAddressMock{}, new(loggerMock)
 		address.On("String").Once().Return(connectionAddress)
 		connection.On("RemoteAddr").Once().Return(address)
-		session := newSession(connection, logger)
+		session := newSession(configuration, connection, logger)
 
 		assert.Equal(t, connection, session.connection)
 		assert.Equal(t, connectionAddress, session.address)

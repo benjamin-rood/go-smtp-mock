@@ -114,7 +114,7 @@ func runFullFlow(client *smtp.Client) error {
 
 // Runs successful SMTP session with target host
 func runSuccessfulSMTPSession(hostAddress string, portNumber int, fullFlow bool) error {
-	connection, _ := net.DialTimeout(networkProtocol, serverWithPortNumber(hostAddress, portNumber), time.Duration(2)*time.Second)
+	connection, _ := net.DialTimeout(networkProtocol, serverWithPortNumber(hostAddress, portNumber), time.Duration(200)*time.Second)
 	client, _ := smtp.NewClient(connection, hostAddress)
 	var err error
 

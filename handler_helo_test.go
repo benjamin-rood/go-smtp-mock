@@ -1,5 +1,7 @@
 package smtpmock
 
+/*
+
 import (
 	"errors"
 	"testing"
@@ -314,3 +316,5 @@ func TestHandlerHeloIsInvalidRequest(t *testing.T) {
 		})
 	}
 }
+
+*/

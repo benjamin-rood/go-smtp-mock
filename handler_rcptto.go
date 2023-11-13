@@ -4,32 +4,48 @@ import "errors"
 
 // RCPTTO command handler
 type handlerRcptto struct {
-	*handler
+	blacklistedEmails   []string
+	notRegisteredEmails []string
 }
 
 // RCPTTO command handler builder. Returns pointer to new handlerRcptto structure
-func newHandlerRcptto(session sessionInterface, message *Message, configuration *configuration) *handlerRcptto {
-	return &handlerRcptto{&handler{session: session, message: message, configuration: configuration}}
+func newHandlerRcptto(blacklisted, notRegistered []string) *handlerRcptto {
+	return &handlerRcptto{blacklisted, notRegistered}
 }
 
 // RCPTTO handler methods
 
 // Main RCPTTO handler runner
-func (handler *handlerRcptto) run(request string) {
-	handler.clearError()
-	handler.clearMessage()
+func (session *session) processRCPT(request string) {
+	config := session.config
+	handler := newHandlerRcptto(config.blacklistedRcpttoEmails, config.notRegisteredEmails)
+	session.clearError()
+	session.clearRcpttoMessage()
 
-	if handler.isInvalidRequest(request) {
+	// Check for invalid RCPTTO command request complex predicates
+	if handler.isInvalidCmdSequence(*session.message) {
+		session.writeRcpttoResult(false, request, config.msgInvalidCmdRcpttoSequence)
 		return
 	}
+	if handler.isInvalidCmdArg(request) {
+		session.writeRcpttoResult(false, request, config.msgInvalidCmdRcpttoArg)
+		return
+	}
+	if handler.isBlacklistedEmail(request) {
+		session.writeRcpttoResult(false, request, config.msgRcpttoBlacklistedEmail)
+		return
+	}
+	if handler.isNotRegisteredEmail(request) {
+		session.writeRcpttoResult(false, request, config.msgRcpttoNotRegisteredEmail)
+	}
 
-	handler.writeResult(true, request, handler.configuration.msgRcpttoReceived)
+	session.writeRcpttoResult(true, request, config.msgRcpttoReceived)
 }
 
 // Erases all message data from RCPTTO command when multiple RCPTTO scenario is disabled
-func (handler *handlerRcptto) clearMessage() {
-	if !handler.configuration.multipleRcptto {
-		messageWithData := handler.message
+func (session *session) clearRcpttoMessage() {
+	if !session.config.multipleRcptto {
+		messageWithData := session.message
 		clearedMessage := &Message{
 			heloRequest:      messageWithData.heloRequest,
 			heloResponse:     messageWithData.heloResponse,
@@ -45,45 +61,35 @@ func (handler *handlerRcptto) clearMessage() {
 // RCPTTO message status resolver. Returns true when current RCPTTO status is true or
 // when multiple RCPTTO scenario is enabled and message includes at least one successful
 // RCPTTO response. Otherwise returns false
-func (handler *handlerRcptto) resolveMessageStatus(currentRcpttoStatus bool) bool {
-	configuration, message := handler.configuration, handler.message
+func (session *session) resolveMessageStatus(currentRcpttoStatus bool) bool {
+	configuration, message := session.config, session.message
 	multipleRcptto, msgRcpttoReceived := configuration.multipleRcptto, configuration.msgRcpttoReceived
 
 	return currentRcpttoStatus || (multipleRcptto && message.isIncludesSuccessfulRcpttoResponse(msgRcpttoReceived))
 }
 
-// Writes handled RCPTTO result to session, message. Always returns true
-func (handler *handlerRcptto) writeResult(isSuccessful bool, request, response string) bool {
-	session, message := handler.session, handler.message
+// Writes handled RCPTTO result to session, message
+func (session *session) writeRcpttoResult(isSuccessful bool, request, response string) {
+	config, message := session.config, session.message
 	if !isSuccessful {
 		session.addError(errors.New(response))
 	}
 
 	message.rcpttoRequestResponse = append(message.rcpttoRequestResponse, []string{request, response})
-	message.rcptto = handler.resolveMessageStatus(isSuccessful)
-	session.writeResponse(response, handler.configuration.responseDelayRcptto)
-	return true
+	message.rcptto = session.resolveMessageStatus(isSuccessful)
+	session.writeResponse(response, config.responseDelayRcptto)
 }
 
 // Invalid RCPTTO command sequence predicate. Returns true and writes result for case when RCPTTO
 // command sequence is invalid, otherwise returns false
-func (handler *handlerRcptto) isInvalidCmdSequence(request string) bool {
-	message := handler.message
-	if !(message.helo && message.mailfrom) {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmdRcpttoSequence)
-	}
-
-	return false
+func (handler *handlerRcptto) isInvalidCmdSequence(message Message) bool {
+	return (message.helo && message.mailfrom)
 }
 
 // Invalid RCPTTO command argument predicate. Returns true and writes result for case when RCPTTO
 // command argument is invalid, otherwise returns false
 func (handler *handlerRcptto) isInvalidCmdArg(request string) bool {
-	if !matchRegex(request, validRcpttoComplexCmdRegexPattern) {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmdRcpttoArg)
-	}
-
-	return false
+	return !matchRegex(request, validRcpttoComplexCmdRegexPattern)
 }
 
 // Returns email from RCPTTO request
@@ -94,31 +100,11 @@ func (handler *handlerRcptto) rcpttoEmail(request string) string {
 // Custom behavior for RCPTTO email. Returns true and writes result for case when
 // RCPTTO email is included in configuration.blacklistedRcpttoEmails slice
 func (handler *handlerRcptto) isBlacklistedEmail(request string) bool {
-	configuration := handler.configuration
-	if isIncluded(configuration.blacklistedRcpttoEmails, handler.rcpttoEmail(request)) {
-		return handler.writeResult(false, request, configuration.msgRcpttoBlacklistedEmail)
-
-	}
-
-	return false
+	return isIncluded(handler.blacklistedEmails, handler.rcpttoEmail(request))
 }
 
 // Custom behavior for RCPTTO email. Returns true and writes result for case when
 // RCPTTO email is included in configuration.notRegisteredEmails slice
 func (handler *handlerRcptto) isNotRegisteredEmail(request string) bool {
-	configuration := handler.configuration
-	if isIncluded(configuration.notRegisteredEmails, handler.rcpttoEmail(request)) {
-		return handler.writeResult(false, request, configuration.msgRcpttoNotRegisteredEmail)
-	}
-
-	return false
-}
-
-// Invalid RCPTTO command request complex predicate. Returns true for case when one
-// of the chain checks returns true, otherwise returns false
-func (handler *handlerRcptto) isInvalidRequest(request string) bool {
-	return handler.isInvalidCmdSequence(request) ||
-		handler.isInvalidCmdArg(request) ||
-		handler.isBlacklistedEmail(request) ||
-		handler.isNotRegisteredEmail(request)
+	return isIncluded(handler.notRegisteredEmails, handler.rcpttoEmail(request))
 }

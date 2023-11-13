@@ -4,31 +4,42 @@ import "errors"
 
 // MAILFROM command handler
 type handlerMailfrom struct {
-	*handler
+	blacklistedEmails []string
 }
 
-// MAILFROM command handler builder. Returns pointer to new handlerHelo structure
-func newHandlerMailfrom(session sessionInterface, message *Message, configuration *configuration) *handlerMailfrom {
-	return &handlerMailfrom{&handler{session: session, message: message, configuration: configuration}}
+// MAILFROM command handler builder. Returns pointer to new handlerMailfrom structure
+func newHandlerMailfrom(blacklisted []string) *handlerMailfrom {
+	return &handlerMailfrom{
+		blacklistedEmails: blacklisted,
+	}
 }
 
 // MAILFROM handler methods
 
 // Main MAILFROM handler runner
-func (handler *handlerMailfrom) run(request string) {
-	handler.clearError()
-	handler.clearMessage()
+func (session *session) processMAIL(request string) {
+	config := session.config
+	handler := newHandlerMailfrom(config.blacklistedMailfromEmails)
+	session.clearError()
+	session.clearMAILFROM()
 
-	if handler.isInvalidRequest(request) {
-		return
+	// Check for invalid MAILFROM command request complex predicates
+	if handler.isInvalidCmdSequence(*session.message) {
+		session.writeMailfromResult(false, request, config.msgInvalidCmdMailfromSequence)
+	}
+	if handler.isInvalidCmdArg(request) {
+		session.writeMailfromResult(false, request, config.msgInvalidCmdMailfromArg)
+	}
+	if handler.isBlacklistedEmail(request) {
+		session.writeMailfromResult(false, request, config.msgMailfromBlacklistedEmail)
 	}
 
-	handler.writeResult(true, request, handler.configuration.msgMailfromReceived)
+	session.writeMailfromResult(true, request, config.msgMailfromReceived)
 }
 
 // Erases all message data from MAILFROM command
-func (handler *handlerMailfrom) clearMessage() {
-	messageWithData := handler.message
+func (session *session) clearMAILFROM() {
+	messageWithData := session.message
 	clearedMessage := &Message{
 		heloRequest:  messageWithData.heloRequest,
 		heloResponse: messageWithData.heloResponse,
@@ -37,58 +48,36 @@ func (handler *handlerMailfrom) clearMessage() {
 	*messageWithData = *clearedMessage
 }
 
-// Writes handled HELO result to session, message. Always returns true
-func (handler *handlerMailfrom) writeResult(isSuccessful bool, request, response string) bool {
-	session, message := handler.session, handler.message
+// Writes handled MAILFROM result to message. Always returns true
+func (session *session) writeMailfromResult(isSuccessful bool, request, response string) {
+	config, message := session.config, session.message
 	if !isSuccessful {
 		session.addError(errors.New(response))
 	}
 
 	message.mailfromRequest, message.mailfromResponse, message.mailfrom = request, response, isSuccessful
-	session.writeResponse(response, handler.configuration.responseDelayMailfrom)
-	return true
+	session.writeResponse(response, config.responseDelayMailfrom)
 }
 
 // Invalid MAILFROM command sequence predicate. Returns true and writes result for case when
 // MAILFROM command sequence is invalid (HELO command was failure), otherwise returns false
-func (handler *handlerMailfrom) isInvalidCmdSequence(request string) bool {
-	if !handler.message.helo {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmdMailfromSequence)
-	}
-
-	return false
+func (handler handlerMailfrom) isInvalidCmdSequence(message Message) bool {
+	return message.helo
 }
 
 // Invalid MAILFROM command argument predicate. Returns true and writes result for case when
 // MAILFROM command argument is invalid, otherwise returns false
-func (handler *handlerMailfrom) isInvalidCmdArg(request string) bool {
-	if !matchRegex(request, validMailromComplexCmdRegexPattern) {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmdMailfromArg)
-	}
-
-	return false
+func (handler handlerMailfrom) isInvalidCmdArg(request string) bool {
+	return !matchRegex(request, validMailromComplexCmdRegexPattern)
 }
 
 // Returns email from MAILFROM request
-func (handler *handlerMailfrom) mailfromEmail(request string) string {
+func (handler handlerMailfrom) extractEmail(request string) string {
 	return regexCaptureGroup(request, validMailromComplexCmdRegexPattern, 3)
 }
 
 // Custom behavior for MAILFROM email. Returns true and writes result for case when
 // MAILFROM email is included in configuration.blacklistedMailfromEmails slice
-func (handler *handlerMailfrom) isBlacklistedEmail(request string) bool {
-	configuration := handler.configuration
-	if isIncluded(configuration.blacklistedMailfromEmails, handler.mailfromEmail(request)) {
-		return handler.writeResult(false, request, configuration.msgMailfromBlacklistedEmail)
-	}
-
-	return false
-}
-
-// Invalid MAILFROM command request complex predicate. Returns true for case when one
-// of the chain checks returns true, otherwise returns false
-func (handler *handlerMailfrom) isInvalidRequest(request string) bool {
-	return handler.isInvalidCmdSequence(request) ||
-		handler.isInvalidCmdArg(request) ||
-		handler.isBlacklistedEmail(request)
+func (handler handlerMailfrom) isBlacklistedEmail(request string) bool {
+	return isIncluded(handler.blacklistedEmails, handler.extractEmail(request))
 }

@@ -19,7 +19,7 @@ type waitGroup interface {
 // Server structure which implements SMTP mock server
 type Server struct {
 	configuration *configuration
-	messages      *messages
+	messages      *MessageList
 	logger        logger
 	listener      net.Listener
 	wg            waitGroup
@@ -34,7 +34,7 @@ type Server struct {
 func newServer(configuration *configuration) *Server {
 	return &Server{
 		configuration: configuration,
-		messages:      new(messages),
+		messages:      NewMessageList(),
 		logger:        newLogger(configuration.logToStdout, configuration.logServerActivity),
 		wg:            new(sync.WaitGroup),
 	}
@@ -66,6 +66,7 @@ func (server *Server) Start() (err error) {
 	server.quit, server.quitTimeout = make(chan interface{}), make(chan interface{})
 	logger.infoActivity(fmt.Sprintf("%s: %d", serverStartMsg, portNumber))
 
+	go server.messages.Writer()
 	server.addToWaitGroup()
 	go func() {
 		defer server.removeFromWaitGroup()
@@ -80,7 +81,7 @@ func (server *Server) Start() (err error) {
 
 			server.addToWaitGroup()
 			go func() {
-				server.handleSession(newSession(connection, logger))
+				server.handleSession(newSession(server.configuration, connection, logger))
 				server.removeFromWaitGroup()
 			}()
 
@@ -95,6 +96,7 @@ func (server *Server) Start() (err error) {
 // Returns error for case when server is not active
 func (server *Server) Stop() (err error) {
 	if server.isStarted() {
+		server.messages.Stop()
 		close(server.quit)
 		server.listener.Close()
 
@@ -121,14 +123,7 @@ func (server *Server) Stop() (err error) {
 // Public interface to get access to server messages.
 // Returns slice with copy of messages
 func (server *Server) Messages() []Message {
-	server.Lock()
-	defer server.Unlock()
-	copiedMessages, messages := []Message{}, server.messages.items
-	for index := range messages {
-		copiedMessages = append(copiedMessages, *messages[index])
-	}
-
-	return copiedMessages
+	return server.messages.Messages()
 }
 
 // Thread-safe getter of server port.
@@ -175,30 +170,23 @@ func (server *Server) stop() {
 	server.started = false
 }
 
-// Creates and assigns new message to server.messages
-func (server *Server) newMessage() *Message {
-	newMessage := new(Message)
-	server.messages.append(newMessage)
-	return newMessage
-}
-
 // Creates and assigns new message with helo context from other message to server.messages
-func (server *Server) newMessageWithHeloContext(otherMessage *Message) *Message {
-	newMessage := server.newMessage()
-	newMessage.heloRequest = otherMessage.heloRequest
-	newMessage.heloResponse = otherMessage.heloResponse
-	newMessage.helo = otherMessage.helo
-	return newMessage
+func newMessageWithHeloContext(otherMessage Message) *Message {
+	return &Message{
+		heloRequest:  otherMessage.heloRequest,
+		heloResponse: otherMessage.heloResponse,
+		helo:         otherMessage.helo,
+	}
 }
 
 // Invalid SMTP command predicate. Returns true when command is invalid, otherwise returns false
-func (server *Server) isInvalidCmd(request string) bool {
+func isInvalidCmd(request string) bool {
 	return !matchRegex(request, availableCmdsRegexPattern)
 }
 
 // Recognizes command implemented commands. Captures the first word divided by spaces,
 // converts it to upper case
-func (server *Server) recognizeCommand(request string) string {
+func recognizeCommand(request string) string {
 	command := strings.Split(request, " ")[0]
 	return strings.ToUpper(command)
 }
@@ -214,54 +202,27 @@ func (server *Server) removeFromWaitGroup() {
 }
 
 // Checks ability to end current session
-func (server *Server) isAbleToEndSession(message *Message, session sessionInterface) bool {
+func (server *Server) isAbleToEndSession(message Message, session *session) bool {
 	return message.quitSent || (session.isErrorFound() && server.configuration.isCmdFailFast)
 }
 
 //nolint:gocyclo // SMTP client-server session handler
-func (server *Server) handleSession(session sessionInterface) {
+func (server *Server) handleSession(session *session) {
 	defer session.finish()
-	message, configuration := server.newMessage(), server.configuration
-	session.writeResponse(configuration.msgGreeting, defaultSessionResponseDelay)
+	// message, configuration := server.newMessage(), server.configuration
 
 	for {
 		select {
 		case <-server.quit:
 			return
 		default:
-			session.setTimeout(configuration.sessionTimeout)
-			request, err := session.readRequest()
+			sentMsg, err := session.ProcessRequest()
 			if err != nil {
 				return
 			}
+			server.messages.Append(sentMsg)
 
-			if server.isInvalidCmd(request) {
-				session.writeResponse(configuration.msgInvalidCmd, defaultSessionResponseDelay)
-				continue
-			}
-
-			switch server.recognizeCommand(request) {
-			case "HELO", "EHLO":
-				newHandlerHelo(session, message, configuration).run(request)
-			case "MAIL":
-				if configuration.multipleMessageReceiving && message.rset && message.isConsistent() {
-					message = server.newMessageWithHeloContext(message)
-				}
-
-				newHandlerMailfrom(session, message, configuration).run(request)
-			case "RCPT":
-				newHandlerRcptto(session, message, configuration).run(request)
-			case "DATA":
-				newHandlerData(session, message, configuration).run(request)
-			case "RSET":
-				newHandlerRset(session, message, configuration).run(request)
-			case "NOOP":
-				newHandlerNoop(session, message, configuration).run(request)
-			case "QUIT":
-				newHandlerQuit(session, message, configuration).run(request)
-			}
-
-			if server.isAbleToEndSession(message, session) {
+			if server.isAbleToEndSession(sentMsg, session) {
 				return
 			}
 		}

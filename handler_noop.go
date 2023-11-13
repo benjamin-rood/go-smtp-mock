@@ -2,25 +2,25 @@ package smtpmock
 
 // NOOP command handler
 type handlerNoop struct {
-	*handler
 }
 
 // NOOP command handler builder. Returns pointer to new handlerNoop structure
-func newHandlerNoop(session sessionInterface, message *Message, configuration *configuration) *handlerNoop {
-	return &handlerNoop{&handler{session: session, message: message, configuration: configuration}}
+func newHandlerNoop() *handlerNoop {
+	return &handlerNoop{}
 }
 
 // NOOP handler methods
 
-// Main NOOP handler runner
-func (handler *handlerNoop) run(request string) {
+// Main processNOOP handler runner
+func (session *session) processNOOP(request string) {
+	config := session.config
+	handler := newHandlerNoop()
 	if handler.isInvalidRequest(request) {
 		return
 	}
 
-	handler.message.noop = true
-	configuration := handler.configuration
-	handler.session.writeResponse(configuration.msgNoopReceived, configuration.responseDelayNoop)
+	session.message.noop = true
+	session.writeResponse(config.msgNoopReceived, config.responseDelayNoop)
 }
 
 // Invalid NOOP command predicate. Returns true when request is invalid, otherwise returns false

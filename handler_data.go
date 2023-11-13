@@ -4,36 +4,39 @@ import "errors"
 
 // DATA command handler
 type handlerData struct {
-	*handler
-	handlerMessage handlerMessageInterface
 }
 
 // DATA command handler builder. Returns pointer to new handlerData structure
-func newHandlerData(session sessionInterface, message *Message, configuration *configuration) *handlerData {
-	return &handlerData{
-		&handler{session: session, message: message, configuration: configuration},
-		newHandlerMessage(session, message, configuration),
-	}
+func newHandlerData() *handlerData {
+	return &handlerData{}
 }
 
 // DATA handler methods
 
 // Main DATA handler runner
-func (handler *handlerData) run(request string) {
-	handler.clearError()
-	handler.clearMessage()
+func (session *session) processDATA(request string) {
+	config := session.config
+	session.clearError()
+	session.clearMessageDATA()
+	handler := newHandlerData()
 
-	if handler.isInvalidRequest(request) {
+	// Check for invalid DATA command predicate
+	if handler.isInvalidCmdSequence(*session.message) {
+		session.writeDataResult(false, request, config.msgInvalidCmdDataSequence)
+		return
+	}
+	if handler.isInvalidCmd(request) {
+		session.writeDataResult(false, request, config.msgInvalidCmd)
 		return
 	}
 
-	handler.writeResult(true, request, handler.configuration.msgDataReceived)
-	handler.processIncomingMessage()
+	session.writeDataResult(true, request, config.msgDataReceived)
+	session.processIncomingMessage()
 }
 
 // Erases all message data from DATA command
-func (handler *handlerData) clearMessage() {
-	messageWithData := handler.message
+func (session *session) clearMessageDATA() {
+	messageWithData := session.message
 	clearedMessage := &Message{
 		heloRequest:           messageWithData.heloRequest,
 		heloResponse:          messageWithData.heloResponse,
@@ -48,45 +51,29 @@ func (handler *handlerData) clearMessage() {
 }
 
 // Reads and saves message body context using handlerMessage under the hood
-func (handler *handlerData) processIncomingMessage() {
-	handler.handlerMessage.run()
+func (session *session) processIncomingMessage() {
+	session.runMessageHandler()
 }
 
-// Writes handled DATA result to session, message. Always returns true
-func (handler *handlerData) writeResult(isSuccessful bool, request, response string) bool {
-	session, message := handler.session, handler.message
+// Writes handled DATA result to session, message
+func (session *session) writeDataResult(isSuccessful bool, request, response string) {
+	config, message := session.config, session.message
 	if !isSuccessful {
 		session.addError(errors.New(response))
 	}
 
 	message.dataRequest, message.dataResponse, message.data = request, response, isSuccessful
-	session.writeResponse(response, handler.configuration.responseDelayData)
-	return true
+	session.writeResponse(response, config.responseDelayData)
 }
 
 // Invalid DATA command sequence predicate. Returns true and writes result for case
 // when DATA command sequence is invalid, otherwise returns false
-func (handler *handlerData) isInvalidCmdSequence(request string) bool {
-	message := handler.message
-	if !(message.helo && message.mailfrom && message.rcptto) {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmdDataSequence)
-	}
-
-	return false
+func (handler *handlerData) isInvalidCmdSequence(message Message) bool {
+	return (message.helo && message.mailfrom && message.rcptto)
 }
 
 // Invalid DATA command predicate. Returns true and writes result for case
 // when DATA command is invalid, otherwise returns false
 func (handler *handlerData) isInvalidCmd(request string) bool {
-	if !matchRegex(request, validDataCmdRegexPattern) {
-		return handler.writeResult(false, request, handler.configuration.msgInvalidCmd)
-	}
-
-	return false
-}
-
-// Invalid DATA command predicate. Returns true and writes result for case
-// when request is invalid, otherwise returns false.
-func (handler *handlerData) isInvalidRequest(request string) bool {
-	return handler.isInvalidCmdSequence(request) || handler.isInvalidCmd(request)
+	return !matchRegex(request, validDataCmdRegexPattern)
 }

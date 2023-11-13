@@ -30,7 +30,8 @@ type sessionInterface interface {
 	finish()
 }
 
-// session interfaces
+// Make sure we satisfy session interface
+var _ sessionInterface = &session{}
 
 type bufin interface {
 	ReadString(byte) (string, error)
@@ -46,23 +47,63 @@ type bufout interface {
 
 // SMTP client-server session
 type session struct {
+	config     configuration
 	connection net.Conn
 	address    string
 	bufin      bufin
 	bufout     bufout
 	err        error
 	logger     logger
+	message    *Message
 }
 
 // SMTP session builder. Creates new session
-func newSession(connection net.Conn, logger logger) *session {
+func newSession(config *configuration, connection net.Conn, logger logger) *session {
 	return &session{
+		config:     *config,
 		connection: connection,
 		address:    connection.RemoteAddr().String(),
 		bufin:      bufio.NewReader(connection),
 		bufout:     bufio.NewWriter(connection),
 		logger:     logger,
+		message:    &Message{},
 	}
+}
+
+func (session *session) ProcessRequest() (Message, error) {
+	config, message := session.config, session.message
+	session.writeResponse(session.config.msgGreeting, defaultSessionResponseDelay)
+	session.setTimeout(session.config.sessionTimeout)
+	request, err := session.readRequest()
+	if err != nil {
+		return Message{}, err
+	}
+	if isInvalidCmd(request) {
+		session.writeResponse(session.config.msgInvalidCmd, defaultSessionResponseDelay)
+		// FIXME: must replicate 'continue' behaviour
+	} else {
+		switch recognizeCommand(request) {
+		case "HELO", "EHLO":
+			session.processHELO(request)
+		case "MAIL":
+			if config.multipleMessageReceiving && message.rset && message.isConsistent() {
+				message = newMessageWithHeloContext(*message)
+			}
+			session.processMAIL(request)
+		case "RCPT":
+			session.processRCPT(request)
+		case "DATA":
+			session.processDATA(request)
+		case "RSET":
+			session.processRSET(request)
+		case "NOOP":
+			session.processNOOP(request)
+		case "QUIT":
+			session.runQuitHandler(request)
+		}
+
+	}
+	return *message, nil
 }
 
 // SMTP session methods
