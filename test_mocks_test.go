@@ -135,6 +135,12 @@ type sessionMock struct {
 	mock.Mock
 }
 
+func (session *sessionMock) processResponse(request string) Message {
+	args := session.Called(request)
+	return args.Get(0).(Message)
+
+}
+
 func (session *sessionMock) setTimeout(timeout int) {
 	session.Called(timeout)
 }

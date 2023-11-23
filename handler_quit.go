@@ -2,25 +2,25 @@ package smtpmock
 
 // QUIT command handler
 type handlerQuit struct {
-	*handler
 }
 
 // QUIT command handler builder. Returns pointer to new handlerQuit structure
-func newHandlerQuit(session sessionInterface, message *Message, configuration *configuration) *handlerQuit {
-	return &handlerQuit{&handler{session: session, message: message, configuration: configuration}}
+func newHandlerQuit() *handlerQuit {
+	return &handlerQuit{}
 }
 
 // QUIT handler methods
 
 // Main QUIT handler runner
-func (handler *handlerQuit) run(request string) {
+func (session *session) processQUIT(request string) {
+	config, message := session.config, session.message
+	handler := newHandlerQuit()
 	if handler.isInvalidRequest(request) {
 		return
 	}
 
-	handler.message.quitSent = true
-	configuration := handler.configuration
-	handler.session.writeResponse(configuration.msgQuitCmd, configuration.responseDelayQuit)
+	message.quitSent = true
+	session.writeResponse(config.msgQuitCmd, config.responseDelayQuit)
 }
 
 // Invalid QUIT command predicate. Returns true when request is invalid, otherwise returns false

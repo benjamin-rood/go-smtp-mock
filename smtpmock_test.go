@@ -153,12 +153,12 @@ func TestNew(t *testing.T) {
 		_ = runSuccessfulSMTPSession(configuration.hostAddress, server.PortNumber, true)
 		_ = server.Stop()
 
-		assert.Equal(t, 2, len(messages.items))
+		assert.Equal(t, 2, len(server.Messages()))
 		assert.NotNil(t, server.quit)
 		assert.False(t, server.isStarted)
 		assert.Greater(t, server.PortNumber, 0)
 
-		receivedMessages := messages.items
+		receivedMessages := server.Messages()
 		firstMessage, secondMessage := receivedMessages[0], receivedMessages[1]
 
 		assert.True(t, firstMessage.helo)

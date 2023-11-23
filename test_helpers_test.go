@@ -126,12 +126,5 @@ func runSuccessfulSMTPSession(hostAddress string, portNumber int, fullFlow bool)
 		}
 	}
 
-	if err = client.Quit(); err != nil {
-		return err
-	}
-	if err = client.Close(); err != nil {
-		return err
-	}
-
-	return nil
+	return client.Quit()
 }

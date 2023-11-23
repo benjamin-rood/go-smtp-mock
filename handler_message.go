@@ -5,28 +5,11 @@ import (
 	"errors"
 )
 
-// Message handler interface
-type handlerMessageInterface interface {
-	run()
-}
-
-// Message handler
-type handlerMessage struct {
-	*handler
-}
-
-// Message handler builder. Returns pointer to new handlerMessage structure
-func newHandlerMessage(session sessionInterface, message *Message, configuration *configuration) *handlerMessage {
-	return &handlerMessage{&handler{session: session, message: message, configuration: configuration}}
-}
-
-// Message handler methods
-
 // Main message handler runner
-func (handler *handlerMessage) run() {
+func (session *session) runMessageHandler() {
 	var request string
 	var msgData []byte
-	session, configuration := handler.session, handler.configuration
+	config := session.config
 
 	for {
 		line, err := session.readBytes()
@@ -45,26 +28,25 @@ func (handler *handlerMessage) run() {
 		}
 
 		// Enforces the maximum message size limit
-		if len(msgData)+len(line) > configuration.msgSizeLimit {
+		if len(msgData)+len(line) > config.msgSizeLimit {
 			session.discardBufin()
-			handler.writeResult(false, request, configuration.msgMsgSizeIsTooBig)
+			session.writeMessageResult(false, request, config.msgMsgSizeIsTooBig)
 			return
 		}
 
 		msgData = append(msgData, line...)
 	}
 
-	handler.writeResult(true, string(msgData), configuration.msgMsgReceived)
+	session.writeMessageResult(true, string(msgData), config.msgMsgReceived)
 }
 
-// Writes handled message result to session, message. Always returns true
-func (handler *handlerMessage) writeResult(isSuccessful bool, request, response string) bool {
-	session, message := handler.session, handler.message
+// Writes handled message result to session, message
+func (session *session) writeMessageResult(isSuccessful bool, request, response string) {
+	config, message := session.config, session.message
 	if !isSuccessful {
 		session.addError(errors.New(response))
 	}
 
 	message.msgRequest, message.msgResponse, message.msg = request, response, isSuccessful
-	session.writeResponse(response, handler.configuration.responseDelayMessage)
-	return true
+	session.writeResponse(response, config.responseDelayMessage)
 }

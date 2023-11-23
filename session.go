@@ -19,6 +19,7 @@ var timeSleep = func(delay int) int {
 
 // SMTP client-server session interface
 type sessionInterface interface {
+	processResponse(string) Message
 	setTimeout(int)
 	readRequest() (string, error)
 	writeResponse(string, int)
@@ -30,7 +31,8 @@ type sessionInterface interface {
 	finish()
 }
 
-// session interfaces
+// Make sure we satisfy session interface
+var _ sessionInterface = &session{}
 
 type bufin interface {
 	ReadString(byte) (string, error)
@@ -46,6 +48,8 @@ type bufout interface {
 
 // SMTP client-server session
 type session struct {
+	config     configuration
+	message    *Message
 	connection net.Conn
 	address    string
 	bufin      bufin
@@ -55,14 +59,39 @@ type session struct {
 }
 
 // SMTP session builder. Creates new session
-func newSession(connection net.Conn, logger logger) *session {
+func newSession(config *configuration, connection net.Conn, logger logger) *session {
 	return &session{
+		config:     *config, // FIXME: change the input arg to pass by value (COPY), not passing a pointer
+		message:    &Message{},
 		connection: connection,
 		address:    connection.RemoteAddr().String(),
 		bufin:      bufio.NewReader(connection),
 		bufout:     bufio.NewWriter(connection),
 		logger:     logger,
 	}
+}
+
+func (session *session) processResponse(request string) Message {
+	config, message := session.config, session.message
+	switch recognizeCommand(request) {
+	case "HELO", "EHLO":
+		session.processHELO(request)
+	case "MAIL":
+		if config.multipleMessageReceiving && message.rset && message.isConsistent() {
+			message = newMessageWithHeloContext(*message)
+		}
+		session.processMAIL(request)
+	case "RCPT":
+		session.processRCPT(request)
+	case "DATA":
+		session.processDATA(request)
+	case "RSET":
+		session.processRSET(request)
+	case "QUIT":
+		session.processQUIT(request)
+	}
+
+	return *message
 }
 
 // SMTP session methods
