@@ -48,7 +48,7 @@ func (session *session) clearMessageDATA() {
 		rcpttoResponse:   messageWithData.rcpttoResponse,
 		rcptto:           messageWithData.rcptto,
 	}
-	*messageWithData = *clearedMessage
+	session.message = clearedMessage
 }
 
 // Reads and saves message body context using handlerMessage under the hood
